@@ -130,13 +130,31 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
 
         rect = dlg.rectangle()
 
-        # 2. 입력창 포커스 클릭 (설정된 경우에만 실행)
+        # 2. 붙여넣기 전 기존 대화 내역 길이 백업 (초기 생각 시간 지연 감지용)
+        chat_click_x, chat_click_y = get_offset_coords(rect, chat_offset_y)
+        dlg.click_input(coords=(chat_click_x, chat_click_y))
+        time.sleep(0.2)
+        with ClipboardManager() as cb:
+            cb.set_sentinel()
+            send_keys("^a")
+            time.sleep(0.3)
+            send_keys("^c")
+            time.sleep(0.3)
+            initial_text = cb.get_text()
+            if initial_text == "__SENTINEL_COPY_PENDING__":
+                initial_text = ""
+
+        # 다시 입력창으로 포커스 복귀 및 선택 블록 해제
+        send_keys("{ESC}")
+        time.sleep(0.3)
+
+        # 3. 입력창 포커스 클릭 (설정된 경우에만 실행 - 현재는 null)
         if input_offset_y is not None and input_offset_y != 0:
             click_x, click_y = get_offset_coords(rect, input_offset_y)
             dlg.click_input(coords=(click_x, click_y))
             time.sleep(0.3)
 
-        # 3. 클립보드 활용 복사 붙여넣기 (Ctrl+V) 고속 전송
+        # 4. 클립보드 활용 복사 붙여넣기 (Ctrl+V) 고속 전송
         with ClipboardManager() as cb:
             cb.set_text(prompt)
             time.sleep(0.3)
@@ -145,14 +163,15 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
             send_keys(submit_keys)
             time.sleep(0.5)
 
-        # 4. 실시간 안정화(답변 완료) 동적 대기 감지 루프
-        print(f"[{window_title}] AI 답변 감지 루프 시작 (최대 {max_wait}초 대기)...")
+        # 5. 실시간 안정화(답변 완료) 동적 대기 감지 루프
+        print(f"[{window_title}] AI 답변 완료를 실시간 감지 중 (최대 {max_wait}초 대기)...")
         
         last_text = ""
         stable_count = 0
         start_time = time.time()
         
-        chat_click_x, chat_click_y = get_offset_coords(rect, chat_offset_y)
+        # 최소 기대 길이 (기존 텍스트 + 새 질문 + 답변이 최소 30자 이상 작성이 시작되었는지 검증)
+        min_expected_len = len(initial_text) + len(prompt) + 30
         
         while time.time() - start_time < max_wait:
             time.sleep(4.0) # 4초 주기 폴링
@@ -176,8 +195,8 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
             
             # 이전 폴링 텍스트와 비교
             if current_text and current_text == last_text:
-                # 프롬프트보다 본문 내용이 충분히 늘어났는지 판단
-                if len(current_text) > len(prompt) + 50:
+                # 실제로 이전 대화 + 프롬프트 + 최소 답변 한 글자 이상 작성되어 최소 기대 길이를 넘었는지 확인
+                if len(current_text) > min_expected_len:
                     stable_count += 1
                     if stable_count >= 2: # 8초 동안 글자 수 변화 감지 없음 -> 완료
                         print(f"[{window_title}] 실시간 완료 감지! 답변 캡처에 성공했습니다.")
