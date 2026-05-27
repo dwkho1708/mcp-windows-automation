@@ -2,18 +2,21 @@
 apps:
   Codex:
     window_title_re: "^Codex$"
-    input_offset_y: null       # Do not click (rely on default window focus to avoid defocusing)
+    input_offset_y: null       # Do not click (uses ESC key focus reset to avoid coordinate and DPI issues)
     chat_offset_y: -500        # Relative offset from bottom of window (clicks chat area to focus)
     default_wait: 12           # Default generation wait time (seconds)
+    submit_keys: "^{ENTER}"    # Use Ctrl+Enter to submit multi-line prompts in Codex
 
   Notepad:
     window_title_re: ".*Notepad.*|.*메모장.*"
     input_offset_y: 150        # Relative offset from top (clicks editor pane)
     chat_offset_y: 150         # Same for copy focus
     default_wait: 1
+    submit_keys: "{ENTER}"     # Standard Enter for Notepad
 
 default:
   input_offset_y: -80
   chat_offset_y: -300
   default_wait: 10
+  submit_keys: "{ENTER}"      # Default submit key
   keystroke_delay: 0.01        # Speed of character typing (seconds)
