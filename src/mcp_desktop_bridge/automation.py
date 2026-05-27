@@ -138,12 +138,16 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
     dlg.click_input(coords=(click_x, click_y))
     time.sleep(0.3)
 
-    # 4. 프롬프트 타이핑 및 전송
-    # 특수 키 {} 에스케이프 처리
-    escaped_prompt = prompt.replace("{", "{{}").replace("}", "{}}")
-    send_keys(escaped_prompt, with_spaces=True)
+    # 4. 클립보드를 이용해 프롬프트를 복사 붙여넣기(Ctrl+V)로 고속 입력
+    # (일반 키 전송 시 발생하는 괄호, 특수 문자 등의 오작동 및 타이핑 딜레이를 완벽 방지)
+    with ClipboardManager() as cb:
+        cb.set_text(prompt)
+        time.sleep(0.3)
+        send_keys("^v")  # 붙여넣기 키 전송
+        time.sleep(1.5)  # 중요: 앱이 클립보드를 읽어 실제로 붙여넣기를 처리할 때까지 충분히 대기 (레이스 컨디션 방지)
+        send_keys("{ENTER}")  # 전송 키 전송
+        time.sleep(0.5)  # 엔터 키가 앱에 입력될 때까지 대기
     time.sleep(0.5)
-    send_keys("{ENTER}")
 
     # 5. 답변 대기
     print(f"[{window_title}] {wait_time}초 동안 답변 생성을 기다리는 중...")
