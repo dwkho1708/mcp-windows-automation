@@ -133,10 +133,11 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
 
     rect = dlg.rectangle()
 
-    # 3. 입력창 포커스 클릭
-    click_x, click_y = get_offset_coords(rect, input_offset_y)
-    dlg.click_input(coords=(click_x, click_y))
-    time.sleep(0.3)
+    # 3. 입력창 포커스 클릭 (input_offset_y가 설정되어 있는 경우에만 실행)
+    if input_offset_y is not None and input_offset_y != 0:
+        click_x, click_y = get_offset_coords(rect, input_offset_y)
+        dlg.click_input(coords=(click_x, click_y))
+        time.sleep(0.3)
 
     # 4. 클립보드를 이용해 프롬프트를 복사 붙여넣기(Ctrl+V)로 고속 입력
     # (일반 키 전송 시 발생하는 괄호, 특수 문자 등의 오작동 및 타이핑 딜레이를 완벽 방지)

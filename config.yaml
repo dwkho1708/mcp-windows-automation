@@ -2,7 +2,7 @@
 apps:
   Codex:
     window_title_re: "^Codex$"
-    input_offset_y: -80        # Relative offset from bottom of window (clicks input area)
+    input_offset_y: null       # Do not click (rely on default window focus to avoid defocusing)
     chat_offset_y: -500        # Relative offset from bottom of window (clicks chat area to focus)
     default_wait: 12           # Default generation wait time (seconds)
 
