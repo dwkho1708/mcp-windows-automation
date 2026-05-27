@@ -33,10 +33,7 @@ def list_active_windows() -> list[dict]:
     현재 Windows OS에 활성화되어 켜져 있는 visible GUI 창 타이틀 목록을 조회합니다.
     특정 제어 대상 앱의 타이틀(window_title)이나 프로세스명(process_name)을 확인하는 가이드 용도로 사용합니다.
     """
-    try:
-        return auto.list_windows()
-    except Exception as e:
-        return [{"error": f"Failed to list windows: {str(e)}"}]
+    return auto.list_windows()
 
 @mcp.tool()
 def ask_desktop_app(app_name: str, prompt: str, wait_seconds: int = None) -> str:
@@ -44,16 +41,13 @@ def ask_desktop_app(app_name: str, prompt: str, wait_seconds: int = None) -> str
     지정한 데스크톱 앱(예: Codex, Notepad, ChatGPT 등)을 포커스하고, 
     질문(prompt)을 타이핑하여 보낸 뒤 결과를 복사하여 답변 텍스트로 반환합니다.
     """
-    try:
-        config = load_config()
-        return auto.send_query_to_window(
-            app_name=app_name, 
-            prompt=prompt, 
-            config=config, 
-            wait_seconds=wait_seconds
-        )
-    except Exception as e:
-        return f"Error executing query on '{app_name}': {str(e)}"
+    config = load_config()
+    return auto.send_query_to_window(
+        app_name=app_name, 
+        prompt=prompt, 
+        config=config, 
+        wait_seconds=wait_seconds
+    )
 
 @mcp.tool()
 def send_keys_to_app(app_name: str, keys: str) -> str:
@@ -61,15 +55,12 @@ def send_keys_to_app(app_name: str, keys: str) -> str:
     지정한 데스크톱 앱(예: Codex, Notepad 등)에 단축키 또는 임의의 키 이벤트를 직접 전송합니다.
     keys 예시: '^s' (Ctrl+S로 저장), '^n' (Ctrl+N으로 새창), '{ENTER}', '{TAB}' 등.
     """
-    try:
-        config = load_config()
-        return auto.send_keys_to_window(
-            app_name=app_name,
-            keys=keys,
-            config=config
-        )
-    except Exception as e:
-        return f"Error sending keys to '{app_name}': {str(e)}"
+    config = load_config()
+    return auto.send_keys_to_window(
+        app_name=app_name,
+        keys=keys,
+        config=config
+    )
 
 def main():
     """

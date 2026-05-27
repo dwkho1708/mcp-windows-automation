@@ -6,6 +6,7 @@ apps:
     chat_offset_y: -500        # Relative offset from bottom of window (clicks chat area to focus)
     default_wait: 12           # Default generation wait time (seconds)
     submit_keys: "^{ENTER}"    # Use Ctrl+Enter to submit multi-line prompts in Codex
+    use_uuid_marker: true      # Appends UUID to prompt to track response generation reliably
 
   Notepad:
     window_title_re: ".*Notepad.*|.*메모장.*"
@@ -13,6 +14,7 @@ apps:
     chat_offset_y: 150         # Same for copy focus
     default_wait: 1
     submit_keys: "{ENTER}"     # Standard Enter for Notepad
+    use_uuid_marker: false
 
 default:
   input_offset_y: -80
@@ -20,3 +22,5 @@ default:
   default_wait: 10
   submit_keys: "{ENTER}"      # Default submit key
   keystroke_delay: 0.01        # Speed of character typing (seconds)
+  use_uuid_marker: false
+
