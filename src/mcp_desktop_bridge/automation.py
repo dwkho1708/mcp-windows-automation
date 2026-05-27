@@ -1,7 +1,6 @@
 import time
 import sys
 import re
-import uuid
 import win32gui
 import win32process
 import win32event
@@ -32,6 +31,7 @@ class NamedMutex:
                 fallback_name = self.name.replace("Global\\", "Local\\")
                 try:
                     self.handle = win32event.CreateMutex(None, False, fallback_name)
+                    self.name = fallback_name  # 내부 상태에 실제 생성된 네임스페이스 이름 반영
                 except Exception:
                     raise e
             else:
@@ -92,7 +92,7 @@ def list_windows() -> list[dict]:
 
 def find_and_focus_window(app_name: str, config: dict):
     """
-    애플리케이션 이름 또는 config.yaml 설정을 기반으로 창 핸들을 직접 매칭해 최전면으로 띄웁니다.
+    애플리케이션 이름 또는 config.yaml 설정을 기반으로 창 핸들을 직접 매칭해 최전면으로 띄우고 포커스 상태를 확인합니다.
     """
     title_regex = f".*{re.escape(app_name)}.*"
     apps_profiles = config.get("apps", {}) or {}
@@ -132,12 +132,29 @@ def find_and_focus_window(app_name: str, config: dict):
         dlg.restore()
         
     dlg.set_focus()
+
+    # Foreground Focus 획득 여부 검증 (최대 1초 대기)
+    focused = False
+    for _ in range(10):
+        if win32gui.GetForegroundWindow() == hwnd:
+            focused = True
+            break
+        time.sleep(0.1)
+
+    if not focused:
+        current_fg = win32gui.GetForegroundWindow()
+        raise RuntimeError(
+            f"윈도우 포커스 전환에 실패했습니다. (대상 HWND: {hwnd}, 현재 Foreground HWND: {current_fg}).\n"
+            f"원격 데스크톱 세션 차단, UAC 세큐어 데스크톱, 혹은 다른 관리자 권한 앱의 포커스 잠금 때문일 수 있습니다."
+        )
+
     return dlg, target_win["window_title"]
 
 
 def get_offset_coords(rect, offset_y: int) -> tuple[int, int]:
     """
     윈도우 영역과 Y 오프셋을 기준으로 X, Y 상대 좌표를 계산합니다.
+    좌표 클릭 실수 및 창 이탈 방지를 위해 윈도우 한계 영역 내로 Clamp 처리합니다.
     """
     width = rect.width()
     height = rect.height()
@@ -148,7 +165,55 @@ def get_offset_coords(rect, offset_y: int) -> tuple[int, int]:
     else:
         click_y = offset_y
         
+    # 창 경계를 벗어나서 클릭 시 다른 창이 선택되는 문제를 막기 위한 Clamp 처리 (10px 패딩)
+    click_x = max(10, min(click_x, width - 10))
+    click_y = max(10, min(click_y, height - 10))
+        
     return click_x, click_y
+
+
+def try_focus_input_uia(dlg) -> bool:
+    """UIA 트리 구조를 탐색하여 Edit/Document 타입의 입력 컨트롤을 찾아 직접 포커스를 부여합니다."""
+    try:
+        for ctrl_type in ["Edit", "Document"]:
+            try:
+                ctrl = dlg.child_window(control_type=ctrl_type)
+                if ctrl.exists() and ctrl.is_visible():
+                    ctrl.set_focus()
+                    return True
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return False
+
+
+def extract_response(current_text: str, initial_text: str, prompt: str) -> str:
+    """대화 내역 텍스트 전체에서 프롬프트 이후에 생성된 AI 응답 텍스트 영역만 정밀 분할해 반환합니다."""
+    # 1. 초기 텍스트 snapshot 분할을 통해 이번 대화 턴의 영역 추출
+    if initial_text and initial_text in current_text:
+        this_turn = current_text.split(initial_text)[-1]
+    else:
+        this_turn = current_text
+
+    # 2. 프롬프트 원문을 기준으로 응답 추출 시도
+    if prompt in this_turn:
+        return this_turn.split(prompt)[-1].strip()
+
+    # 3. 프롬프트가 UI 형식에 맞게 개행이 제거되거나 일부 잘린 경우 대비하여 라인 매칭 시도
+    # 빈 줄을 제외하고 의미 있는 라인만 추출
+    lines = [line.strip() for line in prompt.split("\n") if len(line.strip()) > 10]
+    for line in reversed(lines):
+        if line in this_turn:
+            return this_turn.split(line)[-1].strip()
+
+    # 4. 첫 번째 유의미한 줄 기준 매칭 시도
+    first_line = prompt.split("\n")[0].strip()
+    if len(first_line) > 5 and first_line in this_turn:
+        return this_turn.split(first_line)[-1].strip()
+
+    # 5. 모든 분할 규칙이 작동하지 않을 경우 대화 턴 전체 반환
+    return this_turn.strip()
 
 
 def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds: int = None) -> str:
@@ -165,7 +230,7 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
     default_wait = app_profile.get("default_wait", default_config.get("default_wait", 10))
     submit_keys = app_profile.get("submit_keys", default_config.get("submit_keys", "{ENTER}"))
     keystroke_delay = app_profile.get("keystroke_delay", default_config.get("keystroke_delay", 0.05))
-    use_uuid_marker = app_profile.get("use_uuid_marker", default_config.get("use_uuid_marker", False))
+    wait_for_generation = app_profile.get("wait_for_generation", default_config.get("wait_for_generation", False))
 
     max_wait = wait_seconds if wait_seconds is not None else default_wait
 
@@ -176,19 +241,10 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
         print(f"Warning: 요청된 대기 시간({max_wait}초)이 제한을 초과하여 300초로 조정합니다.", file=sys.stderr)
         max_wait = 300
 
-    request_id = str(uuid.uuid4())
-    marker_str = f"[MCP_END_OF_PROMPT: {request_id}]"
-
-    # UUID marker 적용 시 프롬프트 후미에 마커 삽입
-    if use_uuid_marker:
-        marked_prompt = f"{prompt}\n{marker_str}\n"
-    else:
-        marked_prompt = prompt
-
     with NamedMutex(MUTEX_NAME):
-        # 원본 클립보드 상태 백업 (백업 실패 시 자동화 즉시 중단)
+        # 원본 클립보드 상태 백업 (백업 실패 또는 백업 불가능한 불안정 포맷 감지 시 자동화 즉시 중단)
         with ClipboardManager(require_backup=True) as cb:
-            # 1. 창 활성화
+            # 1. 창 활성화 및 검증
             dlg, window_title = find_and_focus_window(app_name, config)
             time.sleep(0.5)
 
@@ -199,48 +255,51 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
             rect = dlg.rectangle()
             chat_click_x, chat_click_y = get_offset_coords(rect, chat_offset_y)
 
-            # 2. 붙여넣기 전 기존 대화 내역 길이 백업 (마우스 움직임 최소화를 위해 루프 밖에서 1회 포커스)
+            # 2. 붙여넣기 전 기존 대화 내역 snapshot 가져오기 (마우스 움직임 최소화를 위해 루프 밖에서 1회 포커스)
             dlg.click_input(coords=(chat_click_x, chat_click_y))
             time.sleep(0.2)
 
-            cb.set_sentinel()
             send_keys("^a", pause=keystroke_delay)
-            time.sleep(0.3)
-            send_keys("^c", pause=keystroke_delay)
-            time.sleep(0.3)
-            initial_text = cb.get_text()
+            time.sleep(0.2)
+            initial_text = cb.copy_from_focused_app(keystroke_delay=keystroke_delay)
             if initial_text == "__SENTINEL_COPY_PENDING__":
                 initial_text = ""
 
-            # 다시 입력창 포커스로 복귀 및 선택 블록 해제
+            # 다시 포커스 초기화
             send_keys("{ESC}", pause=keystroke_delay)
             time.sleep(0.3)
 
-            # 3. 입력창 포커스 클릭 (설정된 경우에만 실행)
-            if input_offset_y is not None and input_offset_y != 0:
-                click_x, click_y = get_offset_coords(rect, input_offset_y)
-                dlg.click_input(coords=(click_x, click_y))
-                time.sleep(0.3)
+            # 3. 입력창 포커스 (UIA 우선 시도 후 실패 시 좌표 클릭)
+            if not try_focus_input_uia(dlg):
+                if input_offset_y is not None and input_offset_y != 0:
+                    click_x, click_y = get_offset_coords(rect, input_offset_y)
+                    dlg.click_input(coords=(click_x, click_y))
+                    time.sleep(0.3)
 
-            # 4. 클립보드 활용하여 프롬프트 쓰기 및 붙여넣기 전송
-            cb.set_text(marked_prompt)
+            # 4. 클립보드를 활용하여 프롬프트 쓰기 및 붙여넣기 전송
+            cb.set_text(prompt)
             time.sleep(0.3)
             send_keys("^v", pause=keystroke_delay)
-            time.sleep(1.5)  # 붙여넣기 렌더링 시간 충분히 확보
+            time.sleep(1.5)  # 붙여넣기 렌더링 시간 확보
             send_keys(submit_keys, pause=keystroke_delay)
             time.sleep(0.5)
 
+            # 대화창에 포커스를 주어 클립보드 복사 준비
+            dlg.click_input(coords=(chat_click_x, chat_click_y))
+            time.sleep(0.3)
+
+            # 제출 직후의 대화 상태 복사 (텍스트 증가 비교를 위한 기준점)
+            post_submit_text = cb.copy_from_focused_app(keystroke_delay=keystroke_delay)
+            if post_submit_text == "__SENTINEL_COPY_PENDING__":
+                post_submit_text = initial_text
+
             # 5. 실시간 답변 완료 감지 루프
-            print(f"[{window_title}] AI 답변 완료를 실시간 감지 중 (최대 {max_wait}초 대기, UUID 마커: {use_uuid_marker})...", file=sys.stderr)
+            print(f"[{window_title}] AI 답변 완료를 실시간 감지 중 (최대 {max_wait}초 대기, 대기 전략: {wait_for_generation})...", file=sys.stderr)
 
             last_stable_text = ""
             stable_count = 0
             start_time = time.time()
             poll_interval = 2.0
-
-            # 대화창에 포커스를 주어 클립보드 복사 영역 선택 (폴링 중 마우스 움직임 방지)
-            dlg.click_input(coords=(chat_click_x, chat_click_y))
-            time.sleep(0.3)
 
             while True:
                 elapsed = time.time() - start_time
@@ -250,73 +309,46 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
 
                 time.sleep(min(poll_interval, remaining))
 
-                cb.set_sentinel()
-                send_keys("^a", pause=keystroke_delay)
-                time.sleep(0.3)
-                send_keys("^c", pause=keystroke_delay)
-                time.sleep(0.3)
-                current_text = cb.get_text()
+                # 안전하게 시퀀스를 업데이트하며 텍스트 긁기
+                current_text = cb.copy_from_focused_app(keystroke_delay=keystroke_delay)
 
                 if current_text == "__SENTINEL_COPY_PENDING__":
                     print("Warning: 복사 응답이 지연되어 재시도합니다.", file=sys.stderr)
                     continue
 
-                if use_uuid_marker:
-                    # 마커 문자열이 대화 내역에 나타났는지 확인
-                    if marker_str not in current_text:
+                # AI 답변 생성을 대기하는 모드일 경우, 복사된 내용이 제출 직후 기준점보다 유의미하게 늘어났는지 검증
+                if wait_for_generation:
+                    if len(current_text.strip()) <= len(post_submit_text.strip()) + 2:
                         stable_count = 0
                         continue
 
-                    # 마커 이후 생성된 텍스트 추출
-                    parts = current_text.split(marker_str)
-                    suffix = parts[-1]
+                # 응답 영역 추출
+                suffix = extract_response(current_text, initial_text, prompt)
 
-                    # AI가 응답을 생성하기 시작할 때까지 대기 (최소 2자 확보)
-                    if len(suffix.strip()) < 2:
-                        stable_count = 0
-                        continue
-
-                    if suffix == last_stable_text:
-                        stable_count += 1
-                        if stable_count >= 2:  # 4초(2초 * 2회) 동안 변화가 없는 경우 안정화 판단
-                            print(f"[{window_title}] 실시간 완료 감지! (텍스트 안정화)", file=sys.stderr)
-                            break
-                    else:
-                        stable_count = 0
-                        last_stable_text = suffix
+                if suffix == last_stable_text:
+                    stable_count += 1
+                    if stable_count >= 2:  # 4초(2초 * 2회) 동안 변화가 없는 경우 안정화 판단
+                        print(f"[{window_title}] 실시간 완료 감지! (텍스트 안정화)", file=sys.stderr)
+                        break
                 else:
-                    # 마커 미사용 시 단순 텍스트 길이 및 변화 감지
-                    min_expected_len = len(initial_text) + len(prompt) - 5
-                    if len(current_text) < min_expected_len:
-                        stable_count = 0
-                        continue
-
-                    if current_text == last_stable_text:
-                        stable_count += 1
-                        if stable_count >= 2:
-                            print(f"[{window_title}] 실시간 완료 감지! (텍스트 안정화)", file=sys.stderr)
-                            break
-                    else:
-                        stable_count = 0
-                        last_stable_text = current_text
+                    stable_count = 0
+                    last_stable_text = suffix
 
             # 6. 최종 대화 데이터 검증 및 복사
             time.sleep(0.5)
             dlg.click_input(coords=(chat_click_x, chat_click_y))
             time.sleep(0.2)
-            cb.set_sentinel()
+            
             send_keys("^a", pause=keystroke_delay)
-            time.sleep(0.3)
-            send_keys("^c", pause=keystroke_delay)
-            time.sleep(0.3)
-            final_text = cb.get_text()
+            time.sleep(0.2)
+            final_text = cb.copy_from_focused_app(keystroke_delay=keystroke_delay)
 
             if final_text == "__SENTINEL_COPY_PENDING__":
                 final_text = last_stable_text if last_stable_text else "Error: 최종 텍스트 복사에 실패했습니다."
 
-            # 최종 텍스트에서 마커 뒤의 AI 응답 부분만 슬라이싱하여 반환
-            if use_uuid_marker and marker_str in final_text:
-                final_text = final_text.split(marker_str)[-1].strip()
+            # 생성 대기 모드인 경우 AI 응답 영역만 발라내어 반환
+            if wait_for_generation:
+                final_text = extract_response(final_text, initial_text, prompt)
 
             return final_text
 
