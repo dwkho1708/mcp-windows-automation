@@ -173,12 +173,12 @@ def send_query_to_window(app_name: str, prompt: str, config: dict, wait_seconds:
         # 최소 기대 길이 (기존 텍스트 + 새 질문 + 답변이 최소 30자 이상 작성이 시작되었는지 검증)
         min_expected_len = len(initial_text) + len(prompt) + 30
         
+        # 대화창에 포커스를 주어 클립보드 복사 영역 선택 (루프 진입 전 한 번만 클릭하여 마우스 움직임 에러 및 깜빡임 방지)
+        dlg.click_input(coords=(chat_click_x, chat_click_y))
+        time.sleep(0.3)
+        
         while time.time() - start_time < max_wait:
             time.sleep(4.0) # 4초 주기 폴링
-            
-            # 대화창에 포커스를 주어 클립보드 복사 영역 선택
-            dlg.click_input(coords=(chat_click_x, chat_click_y))
-            time.sleep(0.2)
             
             with ClipboardManager() as cb:
                 cb.set_sentinel() # 센티널 설정
