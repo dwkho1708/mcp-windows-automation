@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mcp-windows-automation"
+version = "0.1.0"
+description = "A Model Context Protocol (MCP) server for Windows Desktop GUI Automation."
+readme = "README.md"
+authors = [
+    { name = "dwkho1708" }
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: Microsoft :: Windows",
+    "License :: OSI Approved :: MIT License"
+]
+requires-python = ">=3.10"
+dependencies = [
+    "mcp>=0.1.0",
+    "pywinauto>=0.6.9",
+    "pywin32>=306",
+    "pyyaml>=6.0.1",
+    "psutil>=5.9.8"
+]
+
+[project.scripts]
+mcp-desktop-bridge = "mcp_desktop_bridge.server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
